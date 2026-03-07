@@ -240,27 +240,8 @@ def _fetch_health_metrics_for_day(client: Garmin, ds: str) -> HealthMetrics:
             metrics.weight_kg = metrics.weight_kg / 1000.0
         metrics.body_fat_pct = body.get("bodyFat")
 
-    return metrics
-
-
-
-def sync_activities(db: Database, lookback_days: int = 90) -> int:
-    raw_activities = _fetch_raw_activities(lookback_days)
-    activities = _process_raw_activities(raw_activities)
-
-    count = 0
-    for activity in activities:
-        try:
-            db.upsert_activity(activity)
-            count += 1
-        except Exception as e:
-            logger.warning("Failed to upsert activity %s: %s", activity.activity_id, e)
-
-    db.log_sync("activities", count)
-    return count
-
-
-def sync_health(db: Database, lookback_days: int = 14, max_workers: int = 4) -> int:
+def _fetch_health_metrics_list(lookback_days: int = 14, max_workers: int = 4) -> list[HealthMetrics]:
+    """Fetch health metrics from Garmin API concurrently."""
     client = _get_client()
     metrics_list = []
 
@@ -297,6 +278,28 @@ def sync_health(db: Database, lookback_days: int = 14, max_workers: int = 4) -> 
                     logger.warning("Failed health metrics for %s: %s", ds, e)
                 
                 progress.advance(task)
+
+    return metrics_list
+
+
+def sync_activities(db: Database, lookback_days: int = 90) -> int:
+    raw_activities = _fetch_raw_activities(lookback_days)
+    activities = _process_raw_activities(raw_activities)
+
+    count = 0
+    for activity in activities:
+        try:
+            db.upsert_activity(activity)
+            count += 1
+        except Exception as e:
+            logger.warning("Failed to upsert activity %s: %s", activity.activity_id, e)
+
+    db.log_sync("activities", count)
+    return count
+
+
+def sync_health(db: Database, lookback_days: int = 14, max_workers: int = 4) -> int:
+    metrics_list = _fetch_health_metrics_list(lookback_days, max_workers)
 
     count = 0
     for metrics in metrics_list:
@@ -321,43 +324,7 @@ def get_health_metrics(lookback_days: int = 14, max_workers: int = 4) -> list[He
     
     Uses concurrent fetching to speed up the process.
     """
-    client = _get_client()
-    metrics_list = []
-
-    end = date.today()
-    start = end - timedelta(days=lookback_days)
-    
-    # Generate all date strings
-    date_strings = [
-        (start + timedelta(days=day_offset)).strftime("%Y-%m-%d")
-        for day_offset in range(lookback_days)
-    ]
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-    ) as progress:
-        task = progress.add_task("Fetching health metrics...", total=lookback_days)
-        
-        # Use ThreadPoolExecutor for concurrent API calls
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tasks
-            future_to_date = {
-                executor.submit(_fetch_health_metrics_for_day, client, ds): ds 
-                for ds in date_strings
-            }
-            
-            # Process completed tasks as they finish
-            for future in as_completed(future_to_date):
-                ds = future_to_date[future]
-                try:
-                    metrics = future.result()
-                    metrics_list.append(metrics)
-                except Exception as e:
-                    logger.warning("Failed health metrics for %s: %s", ds, e)
-                
-                progress.advance(task)
-
+    metrics_list = _fetch_health_metrics_list(lookback_days, max_workers)
     return sorted(metrics_list, key=lambda m: m.metric_date, reverse=True)
 
 
