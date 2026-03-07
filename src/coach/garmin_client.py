@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import logging
 from datetime import date, datetime, timedelta
@@ -94,7 +93,8 @@ def _as_dict(val, index: int = 0) -> dict:
     return {}
 
 
-def sync_activities(db: Database, lookback_days: int = 90) -> int:
+def _fetch_raw_activities(lookback_days: int = 90) -> list[dict]:
+    """Fetch raw activity data from Garmin API."""
     client = _get_client()
     start_date = (date.today() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
     end_date = date.today().strftime("%Y-%m-%d")
@@ -104,109 +104,265 @@ def sync_activities(db: Database, lookback_days: int = 90) -> int:
         TextColumn("[progress.description]{task.description}"),
     ) as progress:
         progress.add_task("Fetching activities from Garmin Connect...", total=None)
-        raw_activities = client.get_activities_by_date(start_date, end_date)
+        return client.get_activities_by_date(start_date, end_date)
 
-    count = 0
-    for raw in raw_activities:
+
+def _process_raw_activities(raw_activities: list[dict], limit: int | None = None) -> list[Activity]:
+    """Convert raw activity data to Activity objects."""
+    activities = []
+    for raw in raw_activities[:limit]:
         try:
             activity = _parse_activity(raw)
 
+            client = _get_client()
             hr_zones = _safe_get(
                 client.get_activity_hr_in_timezones, str(activity.activity_id)
             )
             if hr_zones:
                 activity.hr_zones = hr_zones
 
+            activities.append(activity)
+        except Exception as e:
+            logger.warning("Failed to process activity %s: %s", raw.get("activityId"), e)
+
+    return activities
+
+
+def _fetch_health_metrics_for_day(client: Garmin, ds: str) -> HealthMetrics:
+    """Fetch all health metrics for a single day from Garmin API concurrently."""
+    current = datetime.strptime(ds, "%Y-%m-%d").date()
+    metrics = HealthMetrics(metric_date=current)
+
+    # Define all API calls as functions for concurrent execution
+    def get_stats():
+        return _as_dict(_safe_get(client.get_stats, ds, default={}))
+
+    def get_sleep():
+        return _as_dict(_safe_get(client.get_sleep_data, ds, default={}))
+
+    def get_hrv():
+        return _as_dict(_safe_get(client.get_hrv_data, ds, default={}))
+
+    def get_body_battery():
+        return _safe_get(client.get_body_battery, ds, default=[])
+
+    def get_stress():
+        return _as_dict(_safe_get(client.get_stress_data, ds, default={}))
+
+    def get_readiness():
+        return _as_dict(_safe_get(client.get_training_readiness, ds, default={}))
+
+    def get_max_metrics():
+        return _as_dict(_safe_get(client.get_max_metrics, ds, default={}))
+
+    def get_body_composition():
+        return _as_dict(_safe_get(client.get_body_composition, ds, default={}))
+
+    # Execute all API calls concurrently using ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {
+            executor.submit(get_stats): 'stats',
+            executor.submit(get_sleep): 'sleep',
+            executor.submit(get_hrv): 'hrv',
+            executor.submit(get_body_battery): 'bb',
+            executor.submit(get_stress): 'stress',
+            executor.submit(get_readiness): 'readiness',
+            executor.submit(get_max_metrics): 'max_met',
+            executor.submit(get_body_composition): 'body',
+        }
+
+        results = {}
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                results[key] = future.result()
+            except Exception as e:
+                logger.debug("API call %s failed for %s: %s", key, ds, e)
+                results[key] = None
+
+    # Process results
+    stats = results.get('stats')
+    if stats:
+        metrics.resting_hr = stats.get("restingHeartRate")
+
+    sleep = results.get('sleep')
+    if sleep:
+        daily = _as_dict(sleep.get("dailySleepDTO", {}))
+        metrics.sleep_score = _as_dict(
+            _as_dict(daily.get("sleepScores", {})).get("overall", {})
+        ).get("value")
+        metrics.sleep_duration_seconds = daily.get("sleepTimeSeconds")
+        metrics.deep_sleep_seconds = daily.get("deepSleepSeconds")
+        metrics.rem_sleep_seconds = daily.get("remSleepSeconds")
+
+    hrv = results.get('hrv')
+    if hrv:
+        summary = _as_dict(hrv.get("hrvSummary", {}))
+        metrics.hrv_weekly_avg = summary.get("weeklyAvg")
+        metrics.hrv_last_night = summary.get("lastNight")
+        metrics.hrv_status = summary.get("status")
+
+    bb = results.get('bb')
+    if bb is not None:
+        bb_entry = _as_dict(bb)
+        if bb_entry:
+            metrics.body_battery_high = bb_entry.get("charged")
+            metrics.body_battery_low = bb_entry.get("drained")
+
+    stress = results.get('stress')
+    if stress:
+        metrics.stress_avg = stress.get("overallStressLevel")
+
+    readiness = results.get('readiness')
+    if readiness:
+        metrics.training_readiness = readiness.get(
+            "score"
+        ) or readiness.get("trainingReadinessScore")
+
+    max_met = results.get('max_met')
+    if max_met:
+        generic = _as_dict(max_met.get("generic", {}))
+        cycling = _as_dict(max_met.get("cycling", {}))
+        if generic:
+            metrics.vo2_max_running = generic.get("vo2MaxPreciseValue")
+        if cycling:
+            metrics.vo2_max_cycling = cycling.get("vo2MaxPreciseValue")
+
+    body = results.get('body')
+    if body:
+        metrics.weight_kg = body.get("weight")
+        if metrics.weight_kg and metrics.weight_kg > 1000:
+            metrics.weight_kg = metrics.weight_kg / 1000.0
+        metrics.body_fat_pct = body.get("bodyFat")
+
+    return metrics
+
+
+
+def sync_activities(db: Database, lookback_days: int = 90) -> int:
+    raw_activities = _fetch_raw_activities(lookback_days)
+    activities = _process_raw_activities(raw_activities)
+
+    count = 0
+    for activity in activities:
+        try:
             db.upsert_activity(activity)
             count += 1
         except Exception as e:
-            logger.warning("Failed to process activity %s: %s", raw.get("activityId"), e)
+            logger.warning("Failed to upsert activity %s: %s", activity.activity_id, e)
 
     db.log_sync("activities", count)
     return count
 
 
-def sync_health(db: Database, lookback_days: int = 14) -> int:
+def sync_health(db: Database, lookback_days: int = 14, max_workers: int = 4) -> int:
     client = _get_client()
-    count = 0
+    metrics_list = []
 
     end = date.today()
     start = end - timedelta(days=lookback_days)
+    
+    # Generate all date strings
+    date_strings = [
+        (start + timedelta(days=day_offset)).strftime("%Y-%m-%d")
+        for day_offset in range(lookback_days)
+    ]
 
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
     ) as progress:
         task = progress.add_task("Fetching health metrics...", total=lookback_days)
+        
+        # Use ThreadPoolExecutor for concurrent API calls
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_date = {
+                executor.submit(_fetch_health_metrics_for_day, client, ds): ds 
+                for ds in date_strings
+            }
+            
+            # Process completed tasks as they finish
+            for future in as_completed(future_to_date):
+                ds = future_to_date[future]
+                try:
+                    metrics = future.result()
+                    metrics_list.append(metrics)
+                except Exception as e:
+                    logger.warning("Failed health metrics for %s: %s", ds, e)
+                
+                progress.advance(task)
 
-        for day_offset in range(lookback_days):
-            current = start + timedelta(days=day_offset)
-            ds = current.strftime("%Y-%m-%d")
-
-            try:
-                metrics = HealthMetrics(metric_date=current)
-
-                stats = _as_dict(_safe_get(client.get_stats, ds, default={}))
-                if stats:
-                    metrics.resting_hr = stats.get("restingHeartRate")
-
-                sleep = _as_dict(_safe_get(client.get_sleep_data, ds, default={}))
-                if sleep:
-                    daily = _as_dict(sleep.get("dailySleepDTO", {}))
-                    metrics.sleep_score = _as_dict(
-                        _as_dict(daily.get("sleepScores", {})).get("overall", {})
-                    ).get("value")
-                    metrics.sleep_duration_seconds = daily.get("sleepTimeSeconds")
-                    metrics.deep_sleep_seconds = daily.get("deepSleepSeconds")
-                    metrics.rem_sleep_seconds = daily.get("remSleepSeconds")
-
-                hrv = _as_dict(_safe_get(client.get_hrv_data, ds, default={}))
-                if hrv:
-                    summary = _as_dict(hrv.get("hrvSummary", {}))
-                    metrics.hrv_weekly_avg = summary.get("weeklyAvg")
-                    metrics.hrv_last_night = summary.get("lastNight")
-                    metrics.hrv_status = summary.get("status")
-
-                bb = _safe_get(client.get_body_battery, ds, default=[])
-                bb_entry = _as_dict(bb)
-                if bb_entry:
-                    metrics.body_battery_high = bb_entry.get("charged")
-                    metrics.body_battery_low = bb_entry.get("drained")
-
-                stress = _as_dict(_safe_get(client.get_stress_data, ds, default={}))
-                if stress:
-                    metrics.stress_avg = stress.get("overallStressLevel")
-
-                readiness = _as_dict(
-                    _safe_get(client.get_training_readiness, ds, default={})
-                )
-                if readiness:
-                    metrics.training_readiness = readiness.get(
-                        "score"
-                    ) or readiness.get("trainingReadinessScore")
-
-                max_met = _as_dict(_safe_get(client.get_max_metrics, ds, default={}))
-                if max_met:
-                    generic = _as_dict(max_met.get("generic", {}))
-                    cycling = _as_dict(max_met.get("cycling", {}))
-                    if generic:
-                        metrics.vo2_max_running = generic.get("vo2MaxPreciseValue")
-                    if cycling:
-                        metrics.vo2_max_cycling = cycling.get("vo2MaxPreciseValue")
-
-                body = _as_dict(_safe_get(client.get_body_composition, ds, default={}))
-                if body:
-                    metrics.weight_kg = body.get("weight")
-                    if metrics.weight_kg and metrics.weight_kg > 1000:
-                        metrics.weight_kg = metrics.weight_kg / 1000.0
-                    metrics.body_fat_pct = body.get("bodyFat")
-
-                db.upsert_health(metrics)
-                count += 1
-            except Exception as e:
-                logger.warning("Failed health metrics for %s: %s", ds, e)
-
-            progress.advance(task)
+    count = 0
+    for metrics in metrics_list:
+        try:
+            db.upsert_health(metrics)
+            count += 1
+        except Exception as e:
+            logger.warning("Failed to upsert health metrics for %s: %s", metrics.metric_date, e)
 
     db.log_sync("health", count)
     return count
+
+
+def get_recent_activities(lookback_days: int = 90, limit: int = 14) -> list[Activity]:
+    """Fetch recent activities directly from Garmin API without storing in DB."""
+    raw_activities = _fetch_raw_activities(lookback_days)
+    return _process_raw_activities(raw_activities, limit=limit)
+
+
+def get_health_metrics(lookback_days: int = 14, max_workers: int = 4) -> list[HealthMetrics]:
+    """Fetch health metrics directly from Garmin API without storing in DB.
+    
+    Uses concurrent fetching to speed up the process.
+    """
+    client = _get_client()
+    metrics_list = []
+
+    end = date.today()
+    start = end - timedelta(days=lookback_days)
+    
+    # Generate all date strings
+    date_strings = [
+        (start + timedelta(days=day_offset)).strftime("%Y-%m-%d")
+        for day_offset in range(lookback_days)
+    ]
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+    ) as progress:
+        task = progress.add_task("Fetching health metrics...", total=lookback_days)
+        
+        # Use ThreadPoolExecutor for concurrent API calls
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_date = {
+                executor.submit(_fetch_health_metrics_for_day, client, ds): ds 
+                for ds in date_strings
+            }
+            
+            # Process completed tasks as they finish
+            for future in as_completed(future_to_date):
+                ds = future_to_date[future]
+                try:
+                    metrics = future.result()
+                    metrics_list.append(metrics)
+                except Exception as e:
+                    logger.warning("Failed health metrics for %s: %s", ds, e)
+                
+                progress.advance(task)
+
+    return sorted(metrics_list, key=lambda m: m.metric_date, reverse=True)
+
+
+def configure_mcp():
+    garmin_client = _get_client()
+    if not garmin_client:
+        logger.error("Failed to connect to Garmin Connect. Exiting.")
+        return
+
+    logger.info("Successfully connected to Garmin Connect.")
+
+    # configure modules with garmin_client as needed
+    

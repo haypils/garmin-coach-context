@@ -9,6 +9,7 @@ from rich import print as rprint
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from mcp.server.fastmcp import FastMCP
 
 from .config import (
     CONFIG_PATH,
@@ -26,7 +27,6 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
-
 
 @app.command()
 def login(
@@ -78,20 +78,26 @@ def sync(
         rprint(f"\n[bold red]Sync failed:[/bold red] {e}")
         rprint("[dim]Try [bold]coach login[/bold] to re-authenticate.[/dim]")
         raise typer.Exit(1)
+    
+@app.command()
+def mcp() -> None:
+    """Sync training data from Garmin Connect."""
+    from .garmin_client import sync_activities, sync_health
+
+    app = FastMCP("Garmin Connect MCP")
+
 
 
 @app.command()
 def context(
     output: Path = typer.Option(None, "--output", "-o", help="Output path (default: training_context.md)"),
+    use_db: bool = typer.Option(True, "--use-db", help="Use local database instead of fetching from Garmin API"),
 ) -> None:
     """Generate the training context markdown file for Cursor AI."""
     from .context import build_context
 
-    db = Database()
-    out_path = output or CONTEXT_FILE
     try:
-        result = build_context(db, output_path=out_path)
-        db.close()
+        result = build_context(output_path=output, use_db=use_db)
         rprint(f"\n[bold green]Context file generated:[/bold green] {result}")
         rprint(f"\n[dim]Reference it in Cursor chat with [bold]@{result.name}[/bold] to get AI coaching.[/dim]")
     except Exception as e:
