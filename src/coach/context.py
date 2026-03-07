@@ -317,7 +317,7 @@ def build_context(output_path: Path | None = None, use_db: bool = True) -> Path:
     """
     cfg = load_config()
     
-    if not use_db:
+    if use_db:
         from .database import Database
         db = Database()
         health = db.get_health_metrics(since_days=90)

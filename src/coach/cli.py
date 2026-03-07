@@ -91,13 +91,13 @@ def mcp() -> None:
 @app.command()
 def context(
     output: Path = typer.Option(None, "--output", "-o", help="Output path (default: training_context.md)"),
-    use_db: bool = typer.Option(True, "--use-db", help="Use local database instead of fetching from Garmin API"),
+    live: bool = typer.Option(False, "--live", help="Use local database instead of fetching from Garmin API"),
 ) -> None:
     """Generate the training context markdown file for Cursor AI."""
     from .context import build_context
 
     try:
-        result = build_context(output_path=output, use_db=use_db)
+        result = build_context(output_path=output, use_db=not live)
         rprint(f"\n[bold green]Context file generated:[/bold green] {result}")
         rprint(f"\n[dim]Reference it in Cursor chat with [bold]@{result.name}[/bold] to get AI coaching.[/dim]")
     except Exception as e:

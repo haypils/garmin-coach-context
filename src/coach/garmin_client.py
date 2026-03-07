@@ -12,6 +12,8 @@ from .models import Activity, HealthMetrics
 
 logger = logging.getLogger(__name__)
 
+_client_instance = None
+
 
 def _prompt_mfa() -> str:
     """Prompt the user for a Garmin MFA code in the terminal."""
@@ -21,17 +23,20 @@ def _prompt_mfa() -> str:
 
 
 def _get_client() -> Garmin:
-    email, password = get_garmin_credentials()
-    if not email or not password:
-        raise RuntimeError("Garmin credentials not found. Run 'coach login' first.")
-    client = Garmin(email=email, password=password, prompt_mfa=_prompt_mfa)
-    token_path = str(SESSION_DIR)
-    try:
-        client.login(tokenstore=token_path)
-    except Exception:
-        client.login()
-        client.garth.dump(token_path)
-    return client
+    global _client_instance
+    if _client_instance is None:
+        email, password = get_garmin_credentials()
+        if not email or not password:
+            raise RuntimeError("Garmin credentials not found. Run 'coach login' first.")
+        client = Garmin(email=email, password=password, prompt_mfa=_prompt_mfa)
+        token_path = str(SESSION_DIR)
+        try:
+            client.login(tokenstore=token_path)
+        except Exception:
+            client.login()
+            client.garth.dump(token_path)
+        _client_instance = client
+    return _client_instance
 
 
 def _parse_activity(raw: dict) -> Activity:
