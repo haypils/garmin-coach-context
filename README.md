@@ -76,7 +76,7 @@ Then ask your AI for coaching:
 |---------|-------------|
 | `coach login` | Authenticate with Garmin Connect (saves to system keychain) |
 | `coach sync` | Pull latest activities and health data from Garmin |
-| `coach context` | Generate `training_context.md` for Cursor AI |
+| `coach context` | Generate `training_context.md` for AI (use --live for live API data) |
 | `coach summary` | Print weekly training summary table |
 | `coach status` | Show training load, health snapshot, recent activities |
 | `coach config` | View/edit athlete profile (race date, goals, etc.) |
@@ -89,6 +89,7 @@ coach sync --lookback 120       # Sync more history (default: 90 days)
 coach sync --health-days 30     # More health data (default: 14 days)
 coach summary --weeks 12        # Show more weeks
 coach context --output ctx.md   # Custom output path
+coach context --live            # Generate from live API data instead of database
 ```
 
 ## What Data Is Synced
