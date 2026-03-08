@@ -4,7 +4,7 @@ import logging
 from datetime import date, datetime, timedelta
 
 from garminconnect import Garmin
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
 from .config import SESSION_DIR, get_garmin_credentials
 from .database import Database
@@ -98,15 +98,19 @@ def _as_dict(val, index: int = 0) -> dict:
     return {}
 
 
-def _fetch_raw_activities(lookback_days: int = 90) -> list[dict]:
+def _fetch_raw_activities(lookback_days: int = 90, silent: bool = False) -> list[dict]:
     """Fetch raw activity data from Garmin API."""
     client = _get_client()
     start_date = (date.today() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
     end_date = date.today().strftime("%Y-%m-%d")
 
+    if silent:
+        return client.get_activities_by_date(start_date, end_date)
+    
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=20),
     ) as progress:
         progress.add_task("Fetching activities from Garmin Connect...", total=None)
         return client.get_activities_by_date(start_date, end_date)
@@ -243,11 +247,53 @@ def _fetch_health_metrics_for_day(client: Garmin, ds: str) -> HealthMetrics:
     return metrics
 
 
-def _fetch_health_metrics_list(lookback_days: int = 14, max_workers: int = 4) -> list[HealthMetrics]:
+def _run_concurrent_fetch(executor_func, items: list, max_workers: int = 4, silent: bool = False, progress_desc: str = "Processing...", item_count: int = None) -> list:
+    """Generic helper to run concurrent API calls with optional progress tracking."""
+    results = []
+    item_count = item_count or len(items)
+    
+    def _do_fetch():
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(executor_func, item): item for item in items}
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    if result is not None:
+                        results.append(result)
+                except Exception as e:
+                    item = futures[future]
+                    logger.warning("Failed to fetch for %s: %s", item, e)
+    
+    if silent:
+        _do_fetch()
+    else:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=20),
+        ) as progress:
+            task = progress.add_task(progress_desc, total=item_count)
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(executor_func, item): item for item in items}
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                        if result is not None:
+                            results.append(result)
+                    except Exception as e:
+                        item = futures[future]
+                        logger.warning("Failed to fetch for %s: %s", item, e)
+                    
+                    progress.advance(task)
+    
+    return results
+
+
+def _fetch_health_metrics_list(lookback_days: int = 14, max_workers: int = 4, silent: bool = False) -> list[HealthMetrics]:
     """Fetch health metrics from Garmin API concurrently."""
     client = _get_client()
-    metrics_list = []
-
+    
     end = date.today()
     start = end - timedelta(days=lookback_days)
     
@@ -256,37 +302,22 @@ def _fetch_health_metrics_list(lookback_days: int = 14, max_workers: int = 4) ->
         (start + timedelta(days=day_offset)).strftime("%Y-%m-%d")
         for day_offset in range(lookback_days)
     ]
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-    ) as progress:
-        task = progress.add_task("Fetching health metrics...", total=lookback_days)
-        
-        # Use ThreadPoolExecutor for concurrent API calls
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tasks
-            future_to_date = {
-                executor.submit(_fetch_health_metrics_for_day, client, ds): ds 
-                for ds in date_strings
-            }
-            
-            # Process completed tasks as they finish
-            for future in as_completed(future_to_date):
-                ds = future_to_date[future]
-                try:
-                    metrics = future.result()
-                    metrics_list.append(metrics)
-                except Exception as e:
-                    logger.warning("Failed health metrics for %s: %s", ds, e)
-                
-                progress.advance(task)
-
-    return metrics_list
+    
+    def fetch_day_metrics(ds: str) -> HealthMetrics:
+        return _fetch_health_metrics_for_day(client, ds)
+    
+    return _run_concurrent_fetch(
+        fetch_day_metrics,
+        date_strings,
+        max_workers=max_workers,
+        silent=silent,
+        progress_desc="Fetching health metrics...",
+        item_count=lookback_days
+    )
 
 
-def sync_activities(db: Database, lookback_days: int = 90) -> int:
-    raw_activities = _fetch_raw_activities(lookback_days)
+def sync_activities(db: Database, lookback_days: int = 90, silent: bool = False) -> int:
+    raw_activities = _fetch_raw_activities(lookback_days, silent=silent)
     activities = _process_raw_activities(raw_activities)
 
     count = 0
@@ -301,8 +332,8 @@ def sync_activities(db: Database, lookback_days: int = 90) -> int:
     return count
 
 
-def sync_health(db: Database, lookback_days: int = 14, max_workers: int = 4) -> int:
-    metrics_list = _fetch_health_metrics_list(lookback_days, max_workers)
+def sync_health(db: Database, lookback_days: int = 14, max_workers: int = 4, silent: bool = False) -> int:
+    metrics_list = _fetch_health_metrics_list(lookback_days, max_workers, silent=silent)
 
     count = 0
     for metrics in metrics_list:
@@ -343,12 +374,12 @@ def register_tools(mcp):
         last_health_sync = db.get_last_sync_time("health")
         
         act_count = 0
-        if not last_act_sync or (now - last_act_sync) > timedelta(hours=1):
-            act_count = sync_activities(db, lookback_days=90)
+        if not last_act_sync or (now - last_act_sync) > timedelta(hours=0):
+            act_count = sync_activities(db, lookback_days=90, silent=True)
         
         health_count = 0
-        if not last_health_sync or (now - last_health_sync) > timedelta(hours=1):
-            health_count = sync_health(db, lookback_days=90)
+        if not last_health_sync or (now - last_health_sync) > timedelta(hours=0):
+            health_count = sync_health(db, lookback_days=90, silent=True)
         
         db.close()
         if act_count == 0 and health_count == 0:
