@@ -193,16 +193,24 @@ npx @modelcontextprotocol/inspector uv run coach-mcp
 ## Project Structure
 
 ```
-personal-ai-coach/
-  src/coach/
-    cli.py              # CLI entry point (typer)
-    garmin_client.py    # Garmin Connect sync engine
-    database.py         # SQLite storage layer
-    context.py          # Generates training_context.md
-    models.py           # Pydantic data models
-    config.py           # Configuration management
-  athlete_docs/         # Your personal coaching context (gitignored)
-  .cursor/rules/        # Cursor AI coaching rule
-  training_context.md   # Auto-generated (gitignored)
-  config.example.yaml   # Example configuration
+garmin-coach-context/
+  src/
+    coach/
+      __init__.py           # Package marker
+      cli.py                # CLI entry point (Typer)
+      garmin_client.py      # Garmin Connect sync engine
+      database.py           # SQLite storage layer
+      context.py            # Generates training_context.md
+      mcp.py                # MCP server implementation
+      config.py             # Configuration management
+      models.py             # Pydantic data models
+      utils.py              # Utility functions
+    personal_ai_coach.egg-info/ # Packaging metadata
+  athlete_docs/             # Your personal coaching context (gitignored)
+  .cursor/rules/            # Cursor AI coaching rule (for Cursor editor)
+  training_context.md       # Auto-generated context for AI (gitignored)
+  config.example.yaml       # Example configuration
+  plan.md                   # Example training plan (optional)
+  pyproject.toml            # Python project metadata
+  README.md                 # Project documentation
 ```
