@@ -173,8 +173,8 @@ Add to your Claude Desktop MCP settings:
 
 To use the MCP server with Claude Desktop:
 
-1. Open Claude Desktop and go to **Settings → Model Context Protocol**.
-2. Enable MCP
+1. Open Claude Desktop and go to **Settings → Connectors → garmin-coach-context (Configure)**.
+2. Select "Always Allow" for the tools you want enabled
 
 3. Save settings. Claude will now automatically generate your training context when it needs it. You can also request that it syncs your data with Garmin Connect. It's limited to syncing with Garmin Connect once every hour.
 
