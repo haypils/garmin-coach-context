@@ -78,15 +78,6 @@ def sync(
         rprint(f"\n[bold red]Sync failed:[/bold red] {e}")
         rprint("[dim]Try [bold]coach login[/bold] to re-authenticate.[/dim]")
         raise typer.Exit(1)
-    
-@app.command()
-def mcp() -> None:
-    """Sync training data from Garmin Connect."""
-    from .garmin_client import sync_activities, sync_health
-
-    app = FastMCP("Garmin Connect MCP")
-
-
 
 @app.command()
 def context(

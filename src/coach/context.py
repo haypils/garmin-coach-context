@@ -252,11 +252,6 @@ def _detect_fatigue_flags(health: list[HealthMetrics]) -> list[str]:
 
     return flags
 
-
-
-
-
-
 def build_context(output_path: Path | None = None, use_db: bool = True) -> Path:
     """Build training context from either Garmin API or local database.
     
@@ -264,6 +259,12 @@ def build_context(output_path: Path | None = None, use_db: bool = True) -> Path:
         output_path: Optional path for output file (default: training_context.md)
         use_db: If True, use local database. If False, fetch directly from Garmin API.
     """
+    content = _build_context_md(output_path=None, use_db=use_db)
+    out = output_path or CONTEXT_FILE
+    out.write_text(content, encoding="utf-8")
+    return out
+
+def _build_context_md(use_db: bool = True) -> str:
     cfg = load_config()
     
     if use_db:
@@ -305,7 +306,11 @@ def build_context(output_path: Path | None = None, use_db: bool = True) -> Path:
                 ref_lines.append(f"- `{doc}`")
             sections.append(_section("Detailed Athlete Documentation", "\n".join(ref_lines)))
 
-    content = "\n".join(sections)
-    out = output_path or CONTEXT_FILE
-    out.write_text(content, encoding="utf-8")
-    return out
+    return "\n".join(sections)
+
+def register_tools(app):
+    @app.tool()
+    async def get_training_context() -> str:
+        """Fetch training context data (activities, health metrics) from Garmin Connect."""
+        return _build_context_md(use_db=True)
+    
