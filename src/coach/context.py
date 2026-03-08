@@ -259,7 +259,7 @@ def build_context(output_path: Path | None = None, use_db: bool = True) -> Path:
         output_path: Optional path for output file (default: training_context.md)
         use_db: If True, use local database. If False, fetch directly from Garmin API.
     """
-    content = _build_context_md(output_path=None, use_db=use_db)
+    content = _build_context_md(use_db=use_db)
     out = output_path or CONTEXT_FILE
     out.write_text(content, encoding="utf-8")
     return out
