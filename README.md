@@ -131,6 +131,65 @@ Tested on macOS. Should work on Linux and Windows since all dependencies are cro
 - `sqlite3` is built into Python
 - `garminconnect` is pure Python
 
+## Model Context Protocol (MCP) Server
+
+This project supports the [Model Context Protocol (MCP)](https://github.com/modelcontext/protocol) for seamless context injection into AI tools like Claude Desktop.
+
+### MCP Setup - Local
+
+1. **Install [uv](https://github.com/astral-sh/uv) (fast Python package manager):**
+
+2. **Sync the project:**
+
+  ```bash
+  uv sync
+  ```
+
+3. **Start the MCP server:**
+
+### Claude Desktop Integration
+
+Add to your Claude Desktop MCP settings:
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```JSON
+{
+  "mcpServers": {
+    "garmin-coach-context": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "<full path to garmin-coach-context local repo>",
+        "run",
+        "coach-mcp"
+      ]
+    }
+  }
+}
+```
+
+To use the MCP server with Claude Desktop:
+
+1. Open Claude Desktop and go to **Settings → Model Context Protocol**.
+2. Enable MCP
+
+3. Save settings. Claude will now automatically generate your training context when it needs it. You can also request that it syncs your data with Garmin Connect. It's limited to syncing with Garmin Connect once every hour.
+
+### Test MCP for Development with Inspector
+The MCP inspector lets you inspect and test tools for development
+
+Prerequisites: Node.js
+
+1. Run the MCP inspector directly with npx
+
+```bash
+npx @modelcontextprotocol/inspector uv run coach-mcp
+```
+
+
 ## Project Structure
 
 ```
