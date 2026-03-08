@@ -240,6 +240,9 @@ def _fetch_health_metrics_for_day(client: Garmin, ds: str) -> HealthMetrics:
             metrics.weight_kg = metrics.weight_kg / 1000.0
         metrics.body_fat_pct = body.get("bodyFat")
 
+    return metrics
+
+
 def _fetch_health_metrics_list(lookback_days: int = 14, max_workers: int = 4) -> list[HealthMetrics]:
     """Fetch health metrics from Garmin API concurrently."""
     client = _get_client()
