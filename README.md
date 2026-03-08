@@ -133,7 +133,7 @@ Tested on macOS. Should work on Linux and Windows since all dependencies are cro
 
 ## Model Context Protocol (MCP) Server
 
-This project supports the [Model Context Protocol (MCP)](https://github.com/modelcontext/protocol) for seamless context injection into AI tools like Claude Desktop.
+This project supports the Model Context Protocol (MCP) for seamless context injection into AI tools like Claude Desktop.
 
 ### MCP Setup - Local
 
