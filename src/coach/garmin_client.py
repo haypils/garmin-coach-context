@@ -374,11 +374,11 @@ def register_tools(mcp):
         last_health_sync = db.get_last_sync_time("health")
         
         act_count = 0
-        if not last_act_sync or (now - last_act_sync) > timedelta(hours=0):
+        if not last_act_sync or (now - last_act_sync) > timedelta(hours=1):
             act_count = sync_activities(db, lookback_days=90, silent=True)
         
         health_count = 0
-        if not last_health_sync or (now - last_health_sync) > timedelta(hours=0):
+        if not last_health_sync or (now - last_health_sync) > timedelta(hours=1):
             health_count = sync_health(db, lookback_days=90, silent=True)
         
         db.close()
