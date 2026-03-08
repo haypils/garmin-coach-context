@@ -76,7 +76,7 @@ Then ask your AI for coaching:
 |---------|-------------|
 | `coach login` | Authenticate with Garmin Connect (saves to system keychain) |
 | `coach sync` | Pull latest activities and health data from Garmin |
-| `coach context` | Generate `training_context.md` for Cursor AI |
+| `coach context` | Generate `training_context.md` for AI (use --live for live API data) |
 | `coach summary` | Print weekly training summary table |
 | `coach status` | Show training load, health snapshot, recent activities |
 | `coach config` | View/edit athlete profile (race date, goals, etc.) |
@@ -89,6 +89,7 @@ coach sync --lookback 120       # Sync more history (default: 90 days)
 coach sync --health-days 30     # More health data (default: 14 days)
 coach summary --weeks 12        # Show more weeks
 coach context --output ctx.md   # Custom output path
+coach context --live            # Generate from live API data instead of database
 ```
 
 ## What Data Is Synced
@@ -130,19 +131,86 @@ Tested on macOS. Should work on Linux and Windows since all dependencies are cro
 - `sqlite3` is built into Python
 - `garminconnect` is pure Python
 
+## Model Context Protocol (MCP) Server
+
+This project supports the Model Context Protocol (MCP) for seamless context injection into AI tools like Claude Desktop.
+
+### MCP Setup - Local
+
+1. **Install [uv](https://github.com/astral-sh/uv) (fast Python package manager):**
+
+2. **Sync the project:**
+
+  ```bash
+  uv sync
+  ```
+
+3. **Start the MCP server:**
+
+### Claude Desktop Integration
+
+Add to your Claude Desktop MCP settings:
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```JSON
+{
+  "mcpServers": {
+    "garmin-coach-context": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "<full path to garmin-coach-context local repo>",
+        "run",
+        "coach-mcp"
+      ]
+    }
+  }
+}
+```
+
+To use the MCP server with Claude Desktop:
+
+1. Open Claude Desktop and go to **Settings → Connectors → garmin-coach-context (Configure)**.
+2. Select "Always Allow" for the tools you want enabled
+
+3. Save settings. Claude will now automatically generate your training context when it needs it. You can also request that it syncs your data with Garmin Connect. It's limited to syncing with Garmin Connect once every hour.
+
+### Test MCP for Development with Inspector
+The MCP inspector lets you inspect and test tools for development
+
+Prerequisites: Node.js
+
+1. Run the MCP inspector directly with npx
+
+```bash
+npx @modelcontextprotocol/inspector uv run coach-mcp
+```
+
+
 ## Project Structure
 
 ```
-personal-ai-coach/
-  src/coach/
-    cli.py              # CLI entry point (typer)
-    garmin_client.py    # Garmin Connect sync engine
-    database.py         # SQLite storage layer
-    context.py          # Generates training_context.md
-    models.py           # Pydantic data models
-    config.py           # Configuration management
-  athlete_docs/         # Your personal coaching context (gitignored)
-  .cursor/rules/        # Cursor AI coaching rule
-  training_context.md   # Auto-generated (gitignored)
-  config.example.yaml   # Example configuration
+garmin-coach-context/
+  src/
+    coach/
+      __init__.py           # Package marker
+      cli.py                # CLI entry point (Typer)
+      garmin_client.py      # Garmin Connect sync engine
+      database.py           # SQLite storage layer
+      context.py            # Generates training_context.md
+      mcp.py                # MCP server implementation
+      config.py             # Configuration management
+      models.py             # Pydantic data models
+      utils.py              # Utility functions
+    personal_ai_coach.egg-info/ # Packaging metadata
+  athlete_docs/             # Your personal coaching context (gitignored)
+  .cursor/rules/            # Cursor AI coaching rule (for Cursor editor)
+  training_context.md       # Auto-generated context for AI (gitignored)
+  config.example.yaml       # Example configuration
+  plan.md                   # Example training plan (optional)
+  pyproject.toml            # Python project metadata
+  README.md                 # Project documentation
 ```
