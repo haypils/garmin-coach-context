@@ -1,11 +1,12 @@
 from mcp.server.fastmcp import FastMCP
-from .context import register_tools
-
+from coach import context
+from coach import garmin_client
 
 def main():
-    app = FastMCP("Garmin Connect MCP")
-    app = register_tools(app)
-    app.run()
+    mcp = FastMCP("Coach MCP")
+    mcp = context.register_tools(mcp)
+    mcp = garmin_client.register_tools(mcp)
+    mcp.run()
 
 
 if __name__ == "__main__":

@@ -331,13 +331,28 @@ def get_health_metrics(lookback_days: int = 14, max_workers: int = 4) -> list[He
     return sorted(metrics_list, key=lambda m: m.metric_date, reverse=True)
 
 
-def configure_mcp():
-    garmin_client = _get_client()
-    if not garmin_client:
-        logger.error("Failed to connect to Garmin Connect. Exiting.")
-        return
-
-    logger.info("Successfully connected to Garmin Connect.")
-
-    # configure modules with garmin_client as needed
+def register_tools(mcp):
+    @mcp.tool()
+    def sync_garmin_data() -> str:
+        """Sync latest activities and health data from Garmin Connect."""
+        from datetime import datetime, timedelta
+        db = Database()
+        
+        now = datetime.now()
+        last_act_sync = db.get_last_sync_time("activities")
+        last_health_sync = db.get_last_sync_time("health")
+        
+        act_count = 0
+        if not last_act_sync or (now - last_act_sync) > timedelta(hours=1):
+            act_count = sync_activities(db, lookback_days=90)
+        
+        health_count = 0
+        if not last_health_sync or (now - last_health_sync) > timedelta(hours=1):
+            health_count = sync_health(db, lookback_days=90)
+        
+        db.close()
+        if act_count == 0 and health_count == 0:
+            return "Data is already up to date (last synced less than 1 hour ago)."
+        return f"Synced {act_count} activities and {health_count} health records from Garmin Connect."
     
+    return mcp

@@ -308,9 +308,10 @@ def _build_context_md(use_db: bool = True) -> str:
 
     return "\n".join(sections)
 
-def register_tools(app):
-    @app.tool()
-    async def get_training_context() -> str:
+def register_tools(mcp):
+    @mcp.tool()
+    def get_coach_context() -> str:
         """Fetch training context data (activities, health metrics) from Garmin Connect."""
         return _build_context_md(use_db=True)
     
+    return mcp
